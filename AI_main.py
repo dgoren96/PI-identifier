@@ -85,6 +85,58 @@ def load_and_preprocess_data(features_csv, target_csv):
 
     return df
 
+def print_population_statistics(train_df, val_df, test_df,
+                                target_column):
+    """
+    Print a clean, knit-style summary of target True/False counts
+    for Train / Validation / Test sets.
+
+    Parameters
+    ----------
+    train_df : pandas.DataFrame
+        Training subset of the dataset.
+    val_df : pandas.DataFrame
+        Validation subset of the dataset.
+    test_df : pandas.DataFrame
+        Test subset of the dataset.
+    target_column : str
+        Name of the target label column. Example: 'has_pi'.
+
+    Returns
+    -------
+    None
+        Prints a formatted summary table.
+    """
+
+    # Build a dictionary of the three subsets
+    sets = {
+        "Train": train_df,
+        "Validation": val_df,
+        "Test": test_df
+    }
+
+    # ---------- Summary Table for Counts ----------
+    summary_rows = []
+
+    for name, df in sets.items():
+        total = len(df)
+        true_count = df[target_column].sum() if target_column in df.columns else None
+        false_count = total - true_count if true_count is not None else None
+
+        summary_rows.append([
+            name,
+            total,
+            true_count,
+            false_count
+        ])
+
+    summary_df = pd.DataFrame(summary_rows,
+                              columns=["Set", "Total Samples", "True Count", "False Count"])
+
+    print("\n================ TARGET SUMMARY ================\n")
+    print(summary_df.to_string(index=False))
+
+
 
 def create_neural_network(input_dim):
     """
@@ -99,9 +151,9 @@ def create_neural_network(input_dim):
     -------
     model : keras.Model
         Compiled Keras Sequential model with the following architecture:
-        - Dense layer with 128 units, ReLU activation, BatchNormalization, Dropout 0.3
         - Dense layer with 64 units, ReLU activation, BatchNormalization, Dropout 0.3
         - Dense layer with 32 units, ReLU activation, BatchNormalization, Dropout 0.3
+        - Dense layer with 16 units, ReLU activation, BatchNormalization, Dropout 0.3
         - Dense layer with 8 units, ReLU activation, BatchNormalization
         - Output Dense layer with 1 unit and sigmoid activation
         - Optimizer: Adam with learning rate 0.0002
@@ -109,13 +161,13 @@ def create_neural_network(input_dim):
         - Metrics: accuracy, precision, recall
     """
     model = Sequential([
-        Dense(128, input_dim=input_dim, activation='relu'),
-        BatchNormalization(),
-        Dropout(0.3),
-        Dense(64, activation='relu'),
+        Dense(64, input_dim=input_dim, activation='relu'),
         BatchNormalization(),
         Dropout(0.3),
         Dense(32, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.3),
+        Dense(16, activation='relu'),
         BatchNormalization(),
         Dropout(0.3),
         Dense(8, activation='relu'),
@@ -264,11 +316,11 @@ def plot_dim_reduction(X, y, method="PCA", title=None):
     X_scaled = StandardScaler().fit_transform(X_np)
     title = title or method
     if method=="PCA":
-        X_2d = PCA(n_components=2).fit_transform(X_scaled)
+        X_2d = PCA(n_components=3).fit_transform(X_scaled)
     elif method=="t-SNE":
-        X_2d = TSNE(n_components=2, random_state=42).fit_transform(X_scaled)
+        X_2d = TSNE(n_components=3).fit_transform(X_scaled)
     elif method=="UMAP" and HAS_UMAP:
-        X_2d = umap.UMAP(n_components=2, random_state=42).fit_transform(X_scaled)
+        X_2d = umap.UMAP(n_components=3).fit_transform(X_scaled)
     else:
         return
     plt.figure(figsize=(6,5))
@@ -307,8 +359,9 @@ if __name__=='__main__':
 
     # Train/val/test split by id
     unique_ids = df['id_int'].unique()
-    train_ids, test_ids = train_test_split(unique_ids, test_size=0.33, random_state=42)
-    train_ids, val_ids = train_test_split(train_ids, test_size=0.33, random_state=42)
+    train_ids, test_ids = train_test_split(unique_ids, test_size=0.20)
+    train_ids, val_ids = train_test_split(train_ids, test_size=0.20)
+
 
     train_df = df[df['id_int'].isin(train_ids)]
     val_df = df[df['id_int'].isin(val_ids)]
@@ -318,6 +371,8 @@ if __name__=='__main__':
     X_val = val_df[features]; y_val = val_df[target].astype(int)
     X_test = test_df[features]; y_test = test_df[target].astype(int)
 
+
+
     # Dimensionality reduction plots on raw data
     plot_dim_reduction(X_train, y_train, method="PCA", title="PCA 2D (raw train)")
     plot_dim_reduction(X_train, y_train, method="t-SNE", title="t-SNE 2D (raw train)")
@@ -325,15 +380,15 @@ if __name__=='__main__':
 
     # Define models
     models = [
-        ("Random Forest", RandomForestClassifier(class_weight='balanced', n_estimators=256, random_state=42)),
-        ("XGBoost", XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)),
-        ("LightGBM", LGBMClassifier(n_estimators=256, random_state=42)),
-        ("CART", DecisionTreeClassifier(random_state=42)),
-        ("REP Tree", DecisionTreeClassifier(max_depth=10, min_samples_split=10, min_samples_leaf=5, ccp_alpha=0.01, random_state=42)),
+        ("Random Forest", RandomForestClassifier(class_weight='balanced', n_estimators=256)),
+        ("XGBoost", XGBClassifier(use_label_encoder=False, eval_metric='logloss')),
+        ("LightGBM", LGBMClassifier(n_estimators=256)),
+        ("CART", DecisionTreeClassifier()),
+        ("REP Tree", DecisionTreeClassifier(max_depth=10, min_samples_split=8, min_samples_leaf=4, ccp_alpha=0.01)),
         ("Neural Network", create_neural_network(input_dim=X_train.shape[1])),
-        ("KNN (k=5)", Pipeline([('scaler', StandardScaler()), ('knn', KNeighborsClassifier(n_neighbors=3))])),
-        ("SVM", Pipeline([('scaler', StandardScaler()), ('svc', SVC(probability=True, random_state=42))])),
-        ("PCA+KNN", Pipeline([('scaler', StandardScaler()), ('pca', PCA(n_components=8)), ('knn', KNeighborsClassifier(n_neighbors=3))]))
+        ("KNN (k=5)", Pipeline([('scaler', StandardScaler()), ('knn', KNeighborsClassifier(n_neighbors=5))])),
+        ("SVM", Pipeline([('scaler', StandardScaler()), ('svc', SVC(probability=True))])),
+        ("PCA+KNN", Pipeline([('scaler', StandardScaler()), ('pca', PCA(n_components=4)), ('knn', KNeighborsClassifier(n_neighbors=5))]))
     ]
 
     # Train all models and collect results
@@ -357,6 +412,8 @@ if __name__=='__main__':
     # Plot predictions for KNN/SVM/PCA+KNN
     for model_name, y_pred in predictions_for_plot.items():
         plot_predictions_2d(X_test, y_test, y_pred, title=f"{model_name} Predictions (2D PCA)")
+
+    print_population_statistics(train_df, val_df, test_df, target_column=target)
 
     # Print summary
     print("\n\n================= MODEL SUMMARY =================\n")
